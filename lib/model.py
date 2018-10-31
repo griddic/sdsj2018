@@ -23,6 +23,10 @@ def predict(X: pd.DataFrame, config: Config) -> List:
         preds = predict_leak(X, config)
     else:
         preds = predict_lightgbm(X, config)
+        for col, value, target in config['choosing_features']:
+            if 'year' in col or 'month' in col:
+                continue
+            preds[X[col] == value] = target
         if config["non_negative_target"]:
             preds = [max(0, p) for p in preds]
 

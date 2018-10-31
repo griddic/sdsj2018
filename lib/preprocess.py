@@ -27,9 +27,11 @@ def preprocess_pipeline(df: pd.DataFrame, config: Config):
     subsample(df, config, max_size_mb=2 * 1024)
 
     transform_datetime(df, config)
-    transform_categorical(df, config)
+    transform_categorical_strings(df, config)
+    # transform_categorical_numbers(df, config)
     scale(df, config)
     subsample(df, config, max_size_mb=2 * 1024)
+    find_choosing_features(df, config)
 
 
 @timeit
@@ -89,7 +91,7 @@ def transform_datetime(df: pd.DataFrame, config: Config):
 
 
 @timeit
-def transform_categorical(df: pd.DataFrame, config: Config):
+def transform_categorical_strings(df: pd.DataFrame, config: Config):
     if "categorical_columns" not in config:
         # https://www.kaggle.com/ogrellier/python-target-encoding-for-categorical-features
         prior = config["categorical_prior"] = df["target"].mean()
@@ -107,13 +109,28 @@ def transform_categorical(df: pd.DataFrame, config: Config):
 
     for c, values in config["categorical_columns"].items():
         df.loc[:, c] = df[c].apply(lambda x: values[x] if x in values else config["categorical_prior"])
+        # df[c] = df[c].astype('category')
 
+
+@timeit
+def transform_categorical_numbers(df: pd.DataFrame, config: Config):
+    max_categories = 0.1 * len(df)
+    if 'categorical_numbers' not in config:
+        config['categorical_numbers'] = []
+        if config.is_train():
+            for c in [c for c in df if c.startswith("number_")]:
+                if len(df[c].unique()) < max_categories:
+                    config['categorical_numbers'].append(c)
+    for c in config['categorical_numbers']:
+        df[c] = df[c].astype('category')
 
 @timeit
 def scale(df: pd.DataFrame, config: Config):
     warnings.filterwarnings(action='ignore', category=DataConversionWarning)
     scale_columns = [c for c in df if c.startswith("number_") and df[c].dtype != np.int8 and
-                     c not in config["categorical_columns"]]
+                     c not in config["categorical_columns"]
+                     # and c not in config['categorical_numbers']
+                     ]
 
     if len(scale_columns) > 0:
         if "scaler" not in config:
@@ -162,6 +179,21 @@ def non_negative_target_detect(df: pd.DataFrame, config: Config):
     if config.is_train():
         config["non_negative_target"] = df["target"].lt(0).sum() == 0
 
+@timeit
+def find_choosing_features(df: pd.DataFrame, config: Config):
+    if config.is_train():
+        if 'choosing_features' not in config:
+            # config['choosing_features'] = []
+            choosers = []
+            for col in [col for col in df.columns if col not in ['target', "line_id"]]:
+                if len(df[col].unique()) > 4:
+                    continue
+                grouped = df[[col, 'target']].groupby(col).agg(['unique'])
+                choosers_for_col = [i for i, v in enumerate(grouped['target']['unique']) if len(v) == 1]
+                if choosers_for_col:
+                    choosers += [(col, grouped.index[i], grouped['target']['unique'].iloc[i][0]) for i in
+                                 choosers_for_col]
+            config['choosing_features'] = choosers
 
 @timeit
 def feature_selection(df: pd.DataFrame, config: Config):
